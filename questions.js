@@ -1747,7 +1747,7 @@ window.questions = [
   id: 128,
   image: "",
   question:
-    "A 25-year-old man is asked during a physiology viva which receptor combination mediates the sensation of sweet taste. Which of the following is the correct answer?",
+    "A 25-year-old man is asked during a physiology viva which receptor mediates the sensation of sweet taste. Which of the following is the correct answer?",
   options: [
     "T1R2 and T1R3",
     "Epithelial sodium channel",
