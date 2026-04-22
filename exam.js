@@ -9,6 +9,8 @@
   ✅ FIX: iPhone Fullscreen overlay should NOT count as violation
   ✅ FIX: Wrong answers marking (MARKS_WRONG = -1 works correctly)
   ✅ FIX: Login/refresh should NOT reset timer or violations (per-candidate+window key)
+  ✅ FIX: startedAt / endedAt sent as exact Indian time using Asia/Kolkata
+  ✅ FIX: violations are posted to Apps Script and saved in Violations sheet
 ***********************/
 
 function safeParse(s){ try{ return JSON.parse(s) }catch{ return null } }
@@ -34,6 +36,33 @@ function canCountViolation(){
 }
 const IS_IOS = /iPhone|iPad|iPod/i.test(navigator.userAgent);
 
+// ====== Exact Indian Time helper ======
+function formatIndianTime(dateOrMs = Date.now()){
+  const d = typeof dateOrMs === "number" ? new Date(dateOrMs) : dateOrMs;
+
+  const parts = new Intl.DateTimeFormat("en-GB", {
+    timeZone: "Asia/Kolkata",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: true
+  }).formatToParts(d);
+
+  const get = (type) => parts.find(p => p.type === type)?.value || "";
+  const day = get("day");
+  const month = get("month");
+  const year = get("year");
+  const hour = get("hour");
+  const minute = get("minute");
+  const second = get("second");
+  const dayPeriod = (get("dayPeriod") || "").toUpperCase();
+
+  return `${day}-${month}-${year} ${hour}:${minute}:${second} ${dayPeriod}`;
+}
+
 // ====== IST Header (clock + schedule) ======
 const istClock   = document.getElementById("istClock");
 const examStartEl= document.getElementById("examStartIST");
@@ -43,15 +72,27 @@ if (istClock && window.formatIST) {
   const tickIST = () => { istClock.textContent = window.formatIST(Date.now()); };
   tickIST();
   setInterval(tickIST, 1000);
+} else if (istClock) {
+  const tickIST = () => { istClock.textContent = formatIndianTime(Date.now()); };
+  tickIST();
+  setInterval(tickIST, 1000);
 }
 
 if (examStartEl && Number.isFinite(window.EXAM_START_MS) && window.formatIST) {
   examStartEl.textContent = window.formatIST(window.EXAM_START_MS);
-} else if (examStartEl) examStartEl.textContent = "--";
+} else if (examStartEl && Number.isFinite(window.EXAM_START_MS)) {
+  examStartEl.textContent = formatIndianTime(window.EXAM_START_MS);
+} else if (examStartEl) {
+  examStartEl.textContent = "--";
+}
 
 if (examEndEl && Number.isFinite(window.EXAM_END_MS) && window.formatIST) {
   examEndEl.textContent = window.formatIST(window.EXAM_END_MS);
-} else if (examEndEl) examEndEl.textContent = "--";
+} else if (examEndEl && Number.isFinite(window.EXAM_END_MS)) {
+  examEndEl.textContent = formatIndianTime(window.EXAM_END_MS);
+} else if (examEndEl) {
+  examEndEl.textContent = "--";
+}
 
 // ====== Exam Window Lock (IST) ======
 function inWindow(now = Date.now()){
@@ -168,7 +209,7 @@ if(!state.marked  || typeof state.marked  !== "object") state.marked  = {};
 if (!Number.isFinite(state.current) || state.current < 0) state.current = 0;
 if (state.current >= totalQ) state.current = Math.max(0, totalQ - 1);
 
-const durationMs = (window.EXAM_DURATION_MIN || 120) * 60 * 1000;
+const durationMs = (window.EXAM_DURATION_MIN || 60) * 60 * 1000;
 
 function save(){ localStorage.setItem(KEY, JSON.stringify(state)); }
 function pad2(n){ return String(n).padStart(2,"0"); }
@@ -204,9 +245,12 @@ function updateTimer(){
   const elapsed = Date.now() - state.startedAt;
   const left = Math.max(0, durationMs - elapsed);
 
-  const mm = Math.floor(left/60000);
-  const ss = Math.floor((left%60000)/1000);
-  if (elTime) elTime.textContent = `${pad2(mm)}:${pad2(ss)}`;
+  const totalSec = Math.floor(left / 1000);
+  const hh = Math.floor(totalSec / 3600);
+  const mm = Math.floor((totalSec % 3600) / 60);
+  const ss = totalSec % 60;
+
+  if (elTime) elTime.textContent = `${pad2(hh)}:${pad2(mm)}:${pad2(ss)}`;
 
   if(left <= 0) submitExam(true, "DURATION_ENDED");
 }
@@ -407,34 +451,7 @@ if(submitBtn){
   });
 }
 
-// ====== Proctoring ======
-function addViolation(reason){
-  if(!canCountViolation()) return;
-
-  state.violations = (state.violations || 0) + 1;
-  save();
-  if(elVio) elVio.textContent = String(state.violations);
-
-  if(window.PROCTOR_BLUR === true){
-    document.body.classList.add("proctor-blur");
-    setTimeout(() => document.body.classList.remove("proctor-blur"), 1500);
-  }
-
-  const maxV = Number.isFinite(window.MAX_VIOLATIONS) ? window.MAX_VIOLATIONS : null;
-  if(maxV && state.violations >= maxV){
-    submitExam(true, "MAX_VIOLATIONS");
-  }
-}
-
-document.addEventListener("visibilitychange", () => {
-  if (document.visibilityState === "hidden") addViolation("TAB_SWITCH");
-});
-window.addEventListener("blur", () => {
-  if(IS_IOS) return;
-  addViolation("WINDOW_BLUR");
-});
-
-// ====== Submit helper ======
+// ====== API helpers ======
 async function postAPI(payload){
   const API_URL = window.API_URL || window.EXAM_API_URL || "";
   if(!API_URL) throw new Error("API_URL not set in config.js");
@@ -461,6 +478,49 @@ async function postAPI(payload){
     clearTimeout(t);
   }
 }
+
+async function postViolation(type, details = ""){
+  try{
+    await postAPI({
+      action: "violation",
+      token: cand.token,
+      candidateId: cand.candidateId || cand.id || "",
+      type,
+      details
+    });
+  }catch(err){
+    console.log("Violation log failed:", err);
+  }
+}
+
+// ====== Proctoring ======
+function addViolation(reason){
+  if(!canCountViolation()) return;
+
+  state.violations = (state.violations || 0) + 1;
+  save();
+  if(elVio) elVio.textContent = String(state.violations);
+
+  postViolation(reason, `Violation detected during exam. Count=${state.violations}`);
+
+  if(window.PROCTOR_BLUR === true){
+    document.body.classList.add("proctor-blur");
+    setTimeout(() => document.body.classList.remove("proctor-blur"), 1500);
+  }
+
+  const maxV = Number.isFinite(window.MAX_VIOLATIONS) ? window.MAX_VIOLATIONS : null;
+  if(maxV && state.violations >= maxV){
+    submitExam(true, "MAX_VIOLATIONS");
+  }
+}
+
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "hidden") addViolation("TAB_SWITCH");
+});
+window.addEventListener("blur", () => {
+  if(IS_IOS) return;
+  addViolation("WINDOW_BLUR");
+});
 
 // ====== Submit ======
 async function submitExam(isAuto=false, reason="SUBMIT"){
@@ -491,9 +551,9 @@ async function submitExam(isAuto=false, reason="SUBMIT"){
       wrong: r.wrong,
       unattempted: r.unattempted,
       timeTakenSec: r.timeTakenSec,
-      startedAt: state.startedAt,
-      endedAt: Date.now(),
-      durationMin: (window.EXAM_DURATION_MIN || 120),
+      startedAt: formatIndianTime(state.startedAt),
+      endedAt: formatIndianTime(Date.now()),
+      durationMin: (window.EXAM_DURATION_MIN || 60),
       reason,
       isAuto: !!isAuto,
       violations: state.violations || 0,
@@ -514,7 +574,6 @@ async function submitExam(isAuto=false, reason="SUBMIT"){
       return;
     }
 
-    // ✅ Lock submission locally
     localStorage.setItem("neet_submitted", "yes");
     localStorage.setItem("neet_result", JSON.stringify({
       name: cand.name || "",
@@ -524,10 +583,11 @@ async function submitExam(isAuto=false, reason="SUBMIT"){
       wrong: r.wrong,
       unattempted: r.unattempted,
       timeTakenSec: r.timeTakenSec,
-      violations: state.violations || 0
+      violations: state.violations || 0,
+      startedAt: formatIndianTime(state.startedAt),
+      endedAt: formatIndianTime(Date.now())
     }));
 
-    // ✅ Clear saved exam state only after success
     try{ localStorage.removeItem(KEY); }catch{}
     try{ localStorage.removeItem(LEGACY_KEY); }catch{}
 
@@ -549,5 +609,4 @@ async function submitExam(isAuto=false, reason="SUBMIT"){
   updateTimer();
   setInterval(updateTimer, 1000);
   render();
-
 })();
