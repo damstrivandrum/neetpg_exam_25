@@ -245,19 +245,19 @@ window.questions = [
   },
 
   {
-    id: 17,
-    image: "images/IMG_2885.jpeg",
+    id: 16,
+    image: "images/IMG_2879.jpeg",
     question:
-      "An elderly patient presents with increasing hat size, dull skull pain, and hearing difficulty. The skull X-ray shown demonstrates patchy fluffy white sclerotic deposits with thickening of the outer table of the skull, producing a classical cotton wool skull appearance. What is the most likely diagnosis?",
-    options: [
-      "Multiple myeloma",
-      "Paget disease of bone",
-      "Osteomalacia",
-      "Fibrous dysplasia"
-    ],
-    answerIndex: 1,
-    correctAnswerText: "Paget disease of bone"
-  },
+    "The orthopedic device shown in the image is most appropriately used for which of the following purposes?",
+  options: [
+    "Immobilization with traction for shaft femur fracture",
+    "Correction of clubfoot deformity in infants",
+    "Stabilization of cervical spine injury",
+    "External fixation of open tibial fracture"
+  ],
+  answerIndex: 0,
+  correctAnswerText: "Immobilization with traction for shaft femur fracture"
+},
 
   {
     id: 18,
